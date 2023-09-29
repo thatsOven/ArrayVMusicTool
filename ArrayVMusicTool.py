@@ -133,30 +133,24 @@ class ArrayVMusicTool:
                         for i in range(MAX_NOTES):
                             if playing[i] is None: continue
 
-                            if playing[i][2] > mx:
-                                mx = playing[i][2]
+                            if playing[i][2] > playing[mx][2]:
+                                mx = i
 
-                        for i in range(MAX_NOTES):
-                            if playing[i] is None: continue
-
-                            if playing[i][2] == mx:
-                                idx = i
-                                oldPlayingPairs = playing[i][1]
-                                discarded += oldPlayingPairs
-                                playing[i] = [sound, [pair], 0]
+                        idx = mx
+                        oldPlayingPairs = playing[mx][1]
+                        discarded += oldPlayingPairs
+                        playing[mx] = [sound, [pair], 0]
                                 
-                                # dictionary so each key is unique and same sound 
-                                # doesn't cleaned up more than once. unlikely, but midi is weird
-                                indices = {}
-                                for p in oldPlayingPairs:
-                                    indices[(p[0] + 1) * (p[1] + 1)] = p
+                        # dictionary so each key is unique and same sound 
+                        # doesn't cleaned up more than once. unlikely, but midi is weird
+                        indices = {}
+                        for p in oldPlayingPairs:
+                            indices[(p[0] + 1) * (p[1] + 1)] = p
 
-                                for key in indices:
-                                    methods[-1] += INDENT * 2 + f"Highlights.clearMark({key});\n"
-                                    cnt += 1
-
-                                break
-                
+                        for key in indices:
+                            methods[-1] += INDENT * 2 + f"Highlights.clearMark({key});\n"
+                            cnt += 1
+                            
                 if idx != -1:
                     # make sound
                     methods[-1] += INDENT * 2 + f"a[{idx}] = (int)(l * {sound});\n"
