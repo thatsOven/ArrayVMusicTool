@@ -140,16 +140,6 @@ class ArrayVMusicTool:
                         oldPlayingPairs = playing[mx][1]
                         discarded += oldPlayingPairs
                         playing[mx] = [sound, [pair], 0]
-                                
-                        # dictionary so each key is unique and same sound 
-                        # doesn't cleaned up more than once. unlikely, but midi is weird
-                        indices = {}
-                        for p in oldPlayingPairs:
-                            indices[(p[0] + 1) * (p[1] + 1)] = p
-
-                        for key in indices:
-                            methods[-1] += INDENT * 2 + f"Highlights.clearMark({key});\n"
-                            cnt += 1
                             
                 if idx != -1:
                     # make sound
