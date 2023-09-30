@@ -65,7 +65,7 @@ CODE    }
 }
 """
 
-class Event:
+class MidiEvent:
     def __init__(self, type, note, channel, sleep):
         self.type    = type
         self.note    = note
@@ -74,6 +74,25 @@ class Event:
 
     def __repr__(self):
         return "[" + str(self.channel) + "] " + self.type + " " + str(self.note) + " sleep: " + str(self.time)
+
+class ArrayVEvent:
+    def __init__(self, type, value, index = None):
+        self.type  = type
+        self.value = value
+        self.index = index
+
+    def compile(self):
+        match self.type:
+            case "mark":
+                return INDENT * 2 + f"a[{self.index}] = (int)(l * {self.value});\n" + \
+                       INDENT * 2 + f"Highlights.markArray({self.index}, {self.index});\n", 2
+            case "clear":
+                return INDENT * 2 + f"Highlights.clearMark({self.value});\n", 1
+            case "wait":
+                if ARRAYV_PATCH:
+                    return INDENT * 2 + f"Delays.sleep({round(self.value * 1000, 4)});\n", 1
+                else:
+                    return INDENT * 2 + f"Thread.sleep({round(self.value * 1000)});\n", 1 
 
 class ArrayVMusicTool:
     def readMidi(self, fileName):
@@ -86,12 +105,12 @@ class ArrayVMusicTool:
                     type_ = "note_off"
                 else: type_ = message.type
 
-                events.append(Event(
+                events.append(MidiEvent(
                     type_, message.note, 
                     message.channel, message.time
                 ))
             elif message.type == "end_of_track":
-                events.append(Event("", 0, 0, message.time))
+                events.append(MidiEvent("", 0, 0, message.time))
                 break
             elif len(events) != 0:
                 events[-1].time += message.time
@@ -101,22 +120,39 @@ class ArrayVMusicTool:
         events.pop(-1)
 
         return events
+    
+    def mergeDelays(self, events):
+        tmp = []
+        i = 0
+        while i < len(events):
+            while i < len(events) and events[i].type != "wait": 
+                tmp.append(events[i])
+                i += 1
+
+            time = 0
+            while i < len(events) and events[i].type == "wait":
+                time += events[i].value
+                i += 1
+
+            if time != 0:
+                tmp.append(ArrayVEvent("wait", time))
+            
+        return tmp
 
     def convert(self, fileName):
-        methods = [""]
+        events    = []
         playing   = {}
         discarded = []
+
         for i in range(MAX_NOTES):
             playing[i] = None
 
-        cnt = 0
         for event in self.readMidi(fileName):
             print(event)
 
             pair  = (event.note, event.channel)
             sound = (event.note - 25) / 80
             if event.type == "note_on":
-                idx = -1
                 # check if same sound is already playing
                 for i in range(MAX_NOTES):
                     if playing[i] is None: continue
@@ -145,11 +181,7 @@ class ArrayVMusicTool:
                         discarded += oldPlayingPairs
                         playing[mx] = [sound, [pair], 0]
                             
-                if idx != -1:
-                    # make sound
-                    methods[-1] += INDENT * 2 + f"a[{idx}] = (int)(l * {sound});\n"
-                    methods[-1] += INDENT * 2 + f"Highlights.markArray({idx}, {idx});\n"
-                    cnt += 2
+                    events.append(ArrayVEvent("mark", sound, idx))
             elif pair in discarded: 
                 # if note to turn off was already discarded, ignore
                 discarded.remove(pair)
@@ -164,8 +196,7 @@ class ArrayVMusicTool:
                         if len(playing[i][1]) == 0:
                             # every instance of this same sound has turned off. disable highlight
                             playing[i] = None
-                            methods[-1] += INDENT * 2 + f"Highlights.clearMark({i});\n"
-                            cnt += 1
+                            events.append(ArrayVEvent("clear", i))
 
                         break
 
@@ -175,48 +206,31 @@ class ArrayVMusicTool:
                 playing[i][2] += event.time
 
             # delay
-            if event.time != 0:
-                if ARRAYV_PATCH:
-                    methods[-1] += INDENT * 2 + f"Delays.sleep({round(event.time * 1000, 4)});\n" 
-                else:
-                    methods[-1] += INDENT * 2 + f"Thread.sleep({round(event.time * 1000)});\n" 
-                cnt += 1
+            if event.time != 0: events.append(ArrayVEvent("wait", event.time))
 
-            if cnt >= MAX_LINES:
-                cnt = 0
-                methods.append("")
+        # merge delays for better quality sound and more compact output
+        events = self.mergeDelays(events)
 
         # code is split into methods cause java limits the amount of code in same method
-        methodsCode = ""
-        for i, method in enumerate(methods):
-            # merge delays for better quality sound and more compact output
-            out  = ""
-            time = 0
-            for line in method.split("\n"):
-                patch   = ARRAYV_PATCH and line.startswith(INDENT * 2 + "Delays.sleep(")
-                noPatch = (not ARRAYV_PATCH) and line.startswith(INDENT * 2 + "Thread.sleep(")
+        methodsCode = INDENT + "private void m0() " + ("" if ARRAYV_PATCH else "throws Exception ") + "{\n"
+        cnt = 0
+        mId = 1
+        for event in events:
+            closed = False
+            t0, t1 = event.compile()
+            methodsCode += t0
+            cnt         += t1
 
-                if patch or noPatch:
-                    if patch: ptr = len(INDENT * 2 + "Delays.sleep(")
-                    else:     ptr = len(INDENT * 2 + "Thread.sleep(")
+            if cnt >= MAX_LINES:
+                methodsCode += INDENT + "}\n\n" + INDENT + "private void " + f"m{mId}() " + ("" if ARRAYV_PATCH else "throws Exception ") + "{\n"
+                closed = True
+                mId += 1
+                cnt = 0
 
-                    num = ""
-                    while line[ptr] != ")":
-                        num += line[ptr]
-                        ptr += 1
-                    time += float(num)
-                else:
-                    if time != 0:
-                        if ARRAYV_PATCH: out += INDENT * 2 + f"Delays.sleep({round(time, 4)});\n"
-                        else:            out += INDENT * 2 + f"Thread.sleep({round(time)});\n"
-                    out += line + "\n"
-                    time = 0
-
-            methodsCode += INDENT + f"private void m{i}() " + ("" if ARRAYV_PATCH else "throws Exception ")
-            methodsCode += "{\n" + out + INDENT + "}\n\n"
+        if not closed: methodsCode += INDENT + "}\n\n"
 
         code = ""
-        for i in range(len(methods)):
+        for i in range(mId):
             code += INDENT * 2 + f"m{i}();\n"
 
         with open("MusicSort.java", "w") as java:
