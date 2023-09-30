@@ -24,6 +24,10 @@
 from sys  import argv
 from mido import MidiFile
 
+# install the patch for more accurate timings overall and better sounds with this program
+ARRAYV_PATCH = False 
+# if you use ArrayV 4.0
+ARRAYV_4_0 = False
 # max is 15, but ArrayV sometimes doesn't handle clearMark calls in time, 
 # so this is a precaution to avoid ArrayIndexOutOfBoundsException
 MAX_NOTES = 14 
@@ -172,10 +176,10 @@ class ArrayVMusicTool:
 
             # delay
             if event.time != 0:
-                # Thread.sleep guarantees more precise and consistent timings than ArrayV's Delays.sleep
-                # at the cost of sound quality, because ArrayV will play multiple short notes instead of one long note.
-                # overall, i've observed that Thread.sleep results in a better output
-                methods[-1] += INDENT * 2 + f"Thread.sleep({round(event.time * 1000)});\n" 
+                if ARRAYV_PATCH:
+                    methods[-1] += INDENT * 2 + f"Delays.sleep({round(event.time * 1000, 4)});\n" 
+                else:
+                    methods[-1] += INDENT * 2 + f"Thread.sleep({round(event.time * 1000)});\n" 
                 cnt += 1
 
             if cnt >= MAX_LINES:
@@ -185,18 +189,51 @@ class ArrayVMusicTool:
         # code is split into methods cause java limits the amount of code in same method
         methodsCode = ""
         for i, method in enumerate(methods):
-            methodsCode += INDENT + f"private void m{i}() throws Exception "
-            methodsCode += "{\n" + method + INDENT + "}\n\n"
+            # merge delays for better quality sound and more compact output
+            out  = ""
+            time = 0
+            for line in method.split("\n"):
+                patch   = ARRAYV_PATCH and line.startswith(INDENT * 2 + "Delays.sleep(")
+                noPatch = (not ARRAYV_PATCH) and line.startswith(INDENT * 2 + "Thread.sleep(")
+
+                if patch or noPatch:
+                    if patch: ptr = len(INDENT * 2 + "Delays.sleep(")
+                    else:     ptr = len(INDENT * 2 + "Thread.sleep(")
+
+                    num = ""
+                    while line[ptr] != ")":
+                        num += line[ptr]
+                        ptr += 1
+                    time += float(num)
+                else:
+                    if time != 0:
+                        if ARRAYV_PATCH: out += INDENT * 2 + f"Delays.sleep({round(time, 4)});\n"
+                        else:            out += INDENT * 2 + f"Thread.sleep({round(time)});\n"
+                    out += line + "\n"
+                    time = 0
+
+            methodsCode += INDENT + f"private void m{i}() " + ("" if ARRAYV_PATCH else "throws Exception ")
+            methodsCode += "{\n" + out + INDENT + "}\n\n"
 
         code = ""
         for i in range(len(methods)):
             code += INDENT * 2 + f"m{i}();\n"
 
         with open("MusicSort.java", "w") as java:
-            java.write(CODE.replace("CODE", code).replace("METHODS", methodsCode))
+            res = CODE.replace("CODE", code).replace("METHODS", methodsCode)
+            if ARRAYV_4_0: res.replace("io.github.arrayv.", "")
+            java.write(res)
 
 if __name__ == "__main__":
     if len(argv) == 1:
         print("ArrayV music tool - thatsOven")
     else:   
+        if "--patched" in argv:
+            argv.remove("--patched")
+            ARRAYV_PATCH = True
+
+        if "--v4" in argv:
+            argv.remove("--v4")
+            ARRAYV_4_0 = True
+
         ArrayVMusicTool().convert(argv[1])
