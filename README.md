@@ -3,6 +3,8 @@ A tool used to convert MIDI files in Java code that plays music using the ArrayV
 
 The program will produce a file called `MusicSort.java` that can be added in ArrayV's miscellaneous sorts.
 
+For the best results, set the array length to 80 and the speed multiplier to 1.
+
 # Usage
 `ArrayVMusicTool.py input_file.midi`
 
